@@ -107,56 +107,57 @@ if run:
         st.error("No data returned for ticker. Check ticker symbol / exchange suffix (eg. INFY.NS).")
         st.stop()
 
-   # -----------------------
-# Historical Price + Indicators Graph
-# -----------------------
-# Ensure indicators exist before plotting
-data = make_indicators(data)
+    # -----------------------
+    # Ensure indicators exist before plotting
+    data = make_indicators(data)
 
-st.subheader(f"{ticker.upper()} — Historical Price & Indicators")
-price_col, ind_col = st.columns([2,1])
+    # -----------------------
+    # Historical Price + Indicators Graph
+    # -----------------------
+    st.subheader(f"{ticker.upper()} — Historical Price & Indicators")
+    price_col, ind_col = st.columns([2,1])
 
-with price_col:
-    fig_hist = go.Figure()
-    # Close Price
-    fig_hist.add_trace(go.Scatter(
-        x=data.index, y=data['Close'],
-        mode='lines', name='Close',
-        line=dict(color='blue', width=2)
-    ))
-    # EMA20
-    fig_hist.add_trace(go.Scatter(
-        x=data.index, y=data['EMA20'],
-        mode='lines', name='EMA20',
-        line=dict(color='orange', width=1, dash='dot')
-    ))
-    # EMA50
-    fig_hist.add_trace(go.Scatter(
-        x=data.index, y=data['EMA50'],
-        mode='lines', name='EMA50',
-        line=dict(color='green', width=1, dash='dot')
-    ))
-    # RSI on secondary y-axis
-    fig_hist.add_trace(go.Scatter(
-        x=data.index, y=data['RSI'],
-        mode='lines', name='RSI',
-        yaxis='y2',
-        line=dict(color='purple', width=1)
-    ))
-    fig_hist.update_layout(
-        title=f"{ticker.upper()} — Price & Indicators",
-        xaxis_title="Date",
-        yaxis_title="Price",
-        yaxis2=dict(title="RSI", overlaying="y", side="right"),
-        template="plotly_white",
-        height=500
-    )
-    st.plotly_chart(fig_hist, use_container_width=True)
+    with price_col:
+        fig_hist = go.Figure()
+        # Close Price
+        fig_hist.add_trace(go.Scatter(
+            x=data.index, y=data['Close'],
+            mode='lines', name='Close',
+            line=dict(color='blue', width=2)
+        ))
+        # EMA20
+        fig_hist.add_trace(go.Scatter(
+            x=data.index, y=data['EMA20'],
+            mode='lines', name='EMA20',
+            line=dict(color='orange', width=1, dash='dot')
+        ))
+        # EMA50
+        fig_hist.add_trace(go.Scatter(
+            x=data.index, y=data['EMA50'],
+            mode='lines', name='EMA50',
+            line=dict(color='green', width=1, dash='dot')
+        ))
+        # RSI on secondary y-axis
+        fig_hist.add_trace(go.Scatter(
+            x=data.index, y=data['RSI'],
+            mode='lines', name='RSI',
+            yaxis='y2',
+            line=dict(color='purple', width=1)
+        ))
+        fig_hist.update_layout(
+            title=f"{ticker.upper()} — Price & Indicators",
+            xaxis_title="Date",
+            yaxis_title="Price",
+            yaxis2=dict(title="RSI", overlaying="y", side="right"),
+            template="plotly_white",
+            height=500
+        )
+        st.plotly_chart(fig_hist, use_container_width=True)
 
-# Indicators table on the side
-with ind_col:
-    st.write("Latest indicators")
-    st.write(data[['Close','EMA20','EMA50','RSI','MACD','MACDsig']].tail(3))
+    # Indicators table on the side
+    with ind_col:
+        st.write("Latest indicators")
+        st.write(data[['Close','EMA20','EMA50','RSI','MACD','MACDsig']].tail(3))
 
 
     # show price history
