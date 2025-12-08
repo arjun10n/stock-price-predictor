@@ -107,34 +107,17 @@ if run:
         st.error("No data returned for ticker. Check ticker symbol / exchange suffix (eg. INFY.NS).")
         st.stop()
 
-    # -----------------------
-    # Historical Price + Indicators Graph (updated)
-    # -----------------------
-    data = make_indicators(data)  # Ensure indicators exist before plotting
-
-    st.subheader(f"{ticker.upper()} — Historical Price & Indicators")
+    # show price history
+    st.subheader(f"Price history for {ticker.upper()} (last {history_years} years)")
     price_col, ind_col = st.columns([2,1])
     with price_col:
-        fig_hist = go.Figure()
-        # Close Price
-        fig_hist.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Close', line=dict(color='blue', width=2)))
-        # EMA20
-        fig_hist.add_trace(go.Scatter(x=data.index, y=data['EMA20'], mode='lines', name='EMA20', line=dict(color='orange', width=1, dash='dot')))
-        # EMA50
-        fig_hist.add_trace(go.Scatter(x=data.index, y=data['EMA50'], mode='lines', name='EMA50', line=dict(color='green', width=1, dash='dot')))
-        # RSI on secondary axis
-        fig_hist.add_trace(go.Scatter(x=data.index, y=data['RSI'], mode='lines', name='RSI', yaxis='y2', line=dict(color='purple', width=1)))
-        fig_hist.update_layout(
-            title=f"{ticker.upper()} — Price & Indicators",
-            xaxis_title="Date",
-            yaxis_title="Price",
-            yaxis2=dict(title="RSI", overlaying="y", side="right"),
-            template="plotly_white",
-            height=500
-        )
-        st.plotly_chart(fig_hist, use_container_width=True)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Close'))
+        fig.update_layout(title=f"{ticker.upper()} Close Price", xaxis_title="Date", yaxis_title="Price", height=400)
+        st.plotly_chart(fig, use_container_width=True)
 
-    # indicators table
+    # indicators
+    data = make_indicators(data)
     with ind_col:
         st.write("Latest indicators")
         st.write(data[['Close','EMA20','EMA50','RSI','MACD','MACDsig']].tail(3))
@@ -220,3 +203,43 @@ if run:
 
     # Build forecast df
     future_dates = pd.date_range(start=data.index[-1] + pd.Timedelta(days=1), periods=forecast_days)
+    forecast_df = pd.DataFrame({"Date": future_dates, "Predicted_Close": preds})
+    forecast_df.set_index("Date", inplace=True)
+
+    # combine history + forecast for plotting
+    combined = pd.concat([data['Close'], forecast_df['Predicted_Close']])
+    fig2 = go.Figure()
+    fig2.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Historical Close'))
+    fig2.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Predicted_Close'], mode='lines+markers', name='LSTM Forecast'))
+    fig2.update_layout(title=f"{ticker.upper()} — Historical + LSTM Forecast", xaxis_title="Date", yaxis_title="Price", height=450)
+    st.plotly_chart(fig2, use_container_width=True)
+
+    st.subheader("Forecast Table")
+    st.write(forecast_df)
+
+    # Final decision: average future vs last price
+    last_price = float(data['Close'].iloc[-1])
+    avg_future = float(forecast_df['Predicted_Close'].mean())
+
+    if avg_future > last_price:
+        st.success(f" LSTM expects upside (Current: {last_price:.2f} → Avg Future: {avg_future:.2f})")
+    else:
+        st.error(f" LSTM expects downside (Current: {last_price:.2f} → Avg Future: {avg_future:.2f})")
+
+    # Optional: show the MSE on the training tail for basic sanity check
+    # compute simple one-step validation MSE on last portion if available
+    try:
+        # use last 20% as quick validation if dataset big enough
+        split = int(len(X)*0.8)
+        if split < len(X)-5:
+            X_val, y_val = X[split:], y[split:]
+            y_pred_val = model.predict(X_val, verbose=0).flatten()
+            y_pred_val = scaler.inverse_transform(y_pred_val.reshape(-1,1)).flatten()
+            y_val_true = scaler.inverse_transform(y_val.reshape(-1,1)).flatten()
+            mse = np.mean((y_pred_val - y_val_true)**2)
+            st.info(f"Validation MSE (one-step) ≈ {mse:.4f}")
+    except Exception:
+        pass
+
+    st.write(" Forecast complete! For more accurate results, try using more historical data or training the model longer.")
+
