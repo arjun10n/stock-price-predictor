@@ -1,126 +1,244 @@
-# ===============================================================
-# 📈 Stock Price Prediction + LSTM Future Forecast (Visually Clean 🌙)
-# ===============================================================
-
+# app.py — Streamlit app with LSTM forecasting integrated
 import streamlit as st
-import numpy as np
-import pandas as pd
 import yfinance as yf
-import plotly.graph_objects as go
-from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, LSTM, Dropout
+import pandas as pd
+import numpy as np
+import joblib
+import os
 from datetime import datetime, timedelta
+from sklearn.preprocessing import MinMaxScaler
+import plotly.graph_objects as go
 
-st.title("📊 Stock Price Forecasting using LSTM (Next 30 Days)")
-st.write("Upload any stock — see **history + future forecast 🔮**")
+# Try import tensorflow (for LSTM)
+try:
+    import tensorflow as tf
+    from tensorflow.keras.models import Sequential, load_model
+    from tensorflow.keras.layers import LSTM, Dense, Dropout
+    from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+except Exception as e:
+    tf = None
 
-# ---------------------------------------------------------
-# Select Stock Input
-# ---------------------------------------------------------
-ticker = st.text_input("Enter Stock Ticker (example: RELIANCE.NS, TCS.NS, AAPL)", "RELIANCE.NS")
-forecast_days = st.slider("Forecast Future Days", 7, 60, 30)
+st.set_page_config(layout="wide")
+st.title("📈 Stock Trend + LSTM Forecasting")
 
-# ---------------------------------------------------------
-# Fetch Data
-# ---------------------------------------------------------
-@st.cache_data
-def load_data(ticker):
-    return yf.download(ticker, period="5y")
+# -----------------------
+# User inputs / UI
+# -----------------------
+col1, col2, col3 = st.columns([2,1,1])
+with col1:
+    ticker = st.text_input("Enter Stock Ticker (Yahoo format)", value="AAPL")
+with col2:
+    history_years = st.selectbox("History length (years)", [0.5, 1, 2, 3], index=1)  # 0.5 = 6 months
+with col3:
+    forecast_days = st.selectbox("Forecast days", [7, 15, 30], index=2)
 
-data = load_data(ticker)
+retrain = st.checkbox("Retrain LSTM model (if unchecked, load existing if present)", value=False)
 
-if data is None or len(data)==0:
-    st.error("❗ Invalid ticker or no data available")
-    st.stop()
+run = st.button("Run Forecast")
 
-st.subheader("📜 Price History (5 Years)")
-st.line_chart(data["Close"])
+# helper paths
+BASE_DIR = os.path.dirname(__file__)
+LSTM_MODEL_PATH = os.path.join(BASE_DIR, "lstm_model.h5")
+CLASSIFIER_MODEL_PATH = os.path.join(BASE_DIR, "stock_model.joblib")
 
-# ---------------------------------------------------------
-# Prepare Data for LSTM
-# ---------------------------------------------------------
-df = data[['Close']]
-scaler = MinMaxScaler()
-scaled = scaler.fit_transform(df.astype(float))
+# -----------------------
+# Utility functions
+# -----------------------
+def download_data(ticker_symbol: str, years: float):
+    end = datetime.today()
+    start = end - timedelta(days=int(365 * years))
+    df = yf.download(ticker_symbol, start=start, end=end, progress=False)
+    return df
 
-# Generate sequences
-X, y = [], []
-lookback = 60
-for i in range(lookback, len(scaled)):
-    X.append(scaled[i-lookback:i, 0])
-    y.append(scaled[i, 0])
+def make_indicators(df: pd.DataFrame):
+    df = df.copy()
+    df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
+    df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+    df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACDsig'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['RSI'] = 100 - (100 / (1 + df['Close'].pct_change().rolling(14).mean()))
+    df = df.fillna(method='ffill').fillna(method='bfill')
+    return df
 
-X, y = np.array(X), np.array(y)
-X = np.reshape(X, (X.shape[0], X.shape[1], 1))   # LSTM format
+def create_sequences(values, lookback=60):
+    X, y = [], []
+    for i in range(lookback, len(values)):
+        X.append(values[i-lookback:i, 0])
+        y.append(values[i, 0])
+    X, y = np.array(X), np.array(y)
+    X = X.reshape((X.shape[0], X.shape[1], 1))
+    return X, y
 
-# ---------------------------------------------------------
-# Build LSTM Model
-# ---------------------------------------------------------
-with st.spinner("Training LSTM Model... takes 10–20 seconds ⚙"):
-    model = Sequential([
-        LSTM(50, return_sequences=True, input_shape=(X.shape[1], 1)),
-        Dropout(0.2),
-        LSTM(50, return_sequences=False),
-        Dropout(0.2),
-        Dense(25),
-        Dense(1)
-    ])
-    model.compile(optimizer="adam", loss="mse")
-    model.fit(X, y, batch_size=32, epochs=10, verbose=0)
+def build_lstm(lookback=60):
+    model = Sequential()
+    model.add(LSTM(64, input_shape=(lookback,1), return_sequences=True))
+    model.add(Dropout(0.15))
+    model.add(LSTM(32, return_sequences=False))
+    model.add(Dropout(0.10))
+    model.add(Dense(16, activation='relu'))
+    model.add(Dense(1))
+    model.compile(optimizer='adam', loss='mse')
+    return model
 
-# ---------------------------------------------------------
-# Forecast Next X Days
-# ---------------------------------------------------------
-# prepare the input: last `lookback` values
-input_seq = scaled[-lookback:].reshape(1, lookback, 1)
-future_preds = []
+def iterative_forecast(model, last_sequence, scaler, days, lookback=60):
+    seq = last_sequence.copy()  # scaled values shape (lookback, 1)
+    preds = []
+    for _ in range(days):
+        x = seq[-lookback:].reshape(1, lookback, 1)
+        p = model.predict(x, verbose=0)[0,0]
+        preds.append(p)
+        seq = np.append(seq, [[p]], axis=0)
+    preds = np.array(preds).reshape(-1,1)
+    preds = scaler.inverse_transform(preds).flatten()
+    return preds
 
-for _ in range(forecast_days):
-    pred = model.predict(input_seq, verbose=0)  # shape (1,1)
-    # Convert pred to shape (1,1,1) so we can concatenate along axis=1
-    pred_3d = pred.reshape(1, 1, 1)
-    # Append the prediction and shift window
-    input_seq = np.concatenate((input_seq[:, 1:, :], pred_3d), axis=1)
-    future_preds.append(pred[0][0])
+# -----------------------
+# Main app logic
+# -----------------------
+if run:
+    if ticker.strip() == "":
+        st.error("Please enter a valid ticker.")
+        st.stop()
 
-# inverse transform predictions
-future_preds = scaler.inverse_transform(np.array(future_preds).reshape(-1,1)).flatten()
+    with st.spinner("Downloading price data..."):
+        data = download_data(ticker.strip(), history_years)
 
-# Create future dates starting the next calendar day after last historical index
-start_date = pd.to_datetime(data.index[-1]) + pd.Timedelta(days=1)
-future_dates = pd.date_range(start=start_date, periods=forecast_days)
-forecast_df = pd.DataFrame({"Date": future_dates, "Predicted Price": future_preds})
+    if data.empty:
+        st.error("No data returned for ticker. Check ticker symbol / exchange suffix (eg. INFY.NS).")
+        st.stop()
 
-# ---------------------------------------------------------
-# 📊 Visual Forecast Graph (Beautiful Beginner Friendly)
-# ---------------------------------------------------------
-st.subheader("🔮 Future Forecast (LSTM)")
-fig = go.Figure()
+    # show price history
+    st.subheader(f"Price history for {ticker.upper()} (last {history_years} years)")
+    price_col, ind_col = st.columns([2,1])
+    with price_col:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Close'))
+        fig.update_layout(title=f"{ticker.upper()} Close Price", xaxis_title="Date", yaxis_title="Price", height=400)
+        st.plotly_chart(fig, use_container_width=True)
 
-# Historical Price
-fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name="Historical Price", mode="lines"))
+    # indicators
+    data = make_indicators(data)
+    with ind_col:
+        st.write("Latest indicators")
+        st.write(data[['Close','EMA20','EMA50','RSI','MACD','MACDsig']].tail(3))
 
-# Future Predictions
-fig.add_trace(go.Scatter(x=forecast_df["Date"], y=forecast_df["Predicted Price"],
-                         name="Forecast", mode="lines+markers"))
+    # -----------------------
+    # Keep your existing classifier prediction (unchanged)
+    # -----------------------
+    try:
+        if os.path.exists(CLASSIFIER_MODEL_PATH):
+            clf = joblib.load(CLASSIFIER_MODEL_PATH)
+            feat = data[['EMA20','EMA50','MACD','MACDsig','RSI']].dropna().tail(1)
+            if feat.shape[0] == 1:
+                pred = clf.predict(feat)[0]
+                st.subheader("Classifier (existing) - Current direction")
+                st.success("📈 Bullish (UP)" if pred == 1 else "📉 Bearish (DOWN)")
+            else:
+                st.warning("Not enough rows to feed classifier features.")
+        else:
+            st.warning("Classifier model not found — skipping classifier prediction.")
+    except Exception as e:
+        st.error(f"Error loading classifier model: {e}")
 
-fig.update_layout(title=f"📈 {ticker}  — Next {forecast_days} Day Forecast",
-                  xaxis_title="Date", yaxis_title="Price",
-                  template="plotly_dark")
+    # -----------------------
+    # LSTM Forecasting
+    # -----------------------
+    if tf is None:
+        st.error("TensorFlow not available. Install tensorflow in your environment to use LSTM forecasting.")
+        st.stop()
 
-st.plotly_chart(fig, use_container_width=True)
+    st.subheader(f"LSTM Forecast — next {forecast_days} days")
 
-# Trend conclusion
-st.subheader("📌 Market Outlook")
-last_price = float(data['Close'].iloc[-1])
-future_mean = float(np.mean(future_preds))
+    # Prepare data for LSTM (use 'Close' prices)
+    close_vals = data[['Close']].values  # shape (n,1)
+    scaler = MinMaxScaler()
+    scaled_close = scaler.fit_transform(close_vals)
 
-if future_mean > last_price:
-    st.success(f"📈 **UP Trend Expected** — Price likely rising 🚀\n(Current: {last_price:.2f} → Avg Future: {future_mean:.2f})")
-else:
-    st.error(f"📉 **Down Trend Expected** — Caution advised 🔻\n(Current: {last_price:.2f} → Avg Future: {future_mean:.2f})")
+    lookback = 60
+    if len(scaled_close) < lookback + 10:
+        st.error(f"Not enough historical data for LSTM (need at least {lookback+10} days). Increase history length.")
+        st.stop()
 
-# Show table
-st.write("🔍 Forecasted Prices:")
-st.dataframe(forecast_df)
+    X, y = create_sequences(scaled_close, lookback=lookback)
+
+    # train or load model
+    model = None
+    model_msg = ""
+    if os.path.exists(LSTM_MODEL_PATH) and not retrain:
+        try:
+            model = load_model(LSTM_MODEL_PATH)
+            model_msg = f"Loaded saved LSTM model from {LSTM_MODEL_PATH}"
+        except Exception as e:
+            st.warning(f"Could not load saved LSTM model (will train fresh): {e}")
+            model = None
+
+    if model is None:
+        # Train model (simple, short training by default)
+        st.info("Training LSTM model. This may take a few moments depending on environment.")
+        model = build_lstm(lookback=lookback)
+        epochs = 15
+        batch_size = 16
+
+        # callbacks
+        cb_list = []
+        ckpt_path = os.path.join(BASE_DIR, "lstm_checkpoint.h5")
+        cb_list.append(EarlyStopping(monitor='loss', patience=4, restore_best_weights=True))
+        cb_list.append(ModelCheckpoint(ckpt_path, save_best_only=True, monitor='loss', verbose=0))
+
+        # Fit
+        with st.spinner("Fitting LSTM..."):
+            history = model.fit(X, y, epochs=epochs, batch_size=batch_size, callbacks=cb_list, verbose=0)
+        # save model
+        try:
+            model.save(LSTM_MODEL_PATH)
+            model_msg = f"Trained and saved LSTM model to {LSTM_MODEL_PATH}"
+        except Exception as e:
+            model_msg = f"Trained LSTM but failed to save model: {e}"
+
+    st.write(model_msg)
+
+    # Prepare last sequence and forecast iteratively
+    last_seq = scaled_close[-lookback:]  # shape (lookback, 1)
+    preds = iterative_forecast(model, last_seq, scaler, forecast_days, lookback=lookback)
+
+    # Build forecast df
+    future_dates = pd.date_range(start=data.index[-1] + pd.Timedelta(days=1), periods=forecast_days)
+    forecast_df = pd.DataFrame({"Date": future_dates, "Predicted_Close": preds})
+    forecast_df.set_index("Date", inplace=True)
+
+    # combine history + forecast for plotting
+    combined = pd.concat([data['Close'], forecast_df['Predicted_Close']])
+    fig2 = go.Figure()
+    fig2.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Historical Close'))
+    fig2.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Predicted_Close'], mode='lines+markers', name='LSTM Forecast'))
+    fig2.update_layout(title=f"{ticker.upper()} — Historical + LSTM Forecast", xaxis_title="Date", yaxis_title="Price", height=450)
+    st.plotly_chart(fig2, use_container_width=True)
+
+    st.subheader("Forecast Table")
+    st.write(forecast_df)
+
+    # Final decision: average future vs last price
+    last_price = float(data['Close'].iloc[-1])
+    avg_future = float(forecast_df['Predicted_Close'].mean())
+
+    if avg_future > last_price:
+        st.success(f"🚀 LSTM expects upside (Current: {last_price:.2f} → Avg Future: {avg_future:.2f})")
+    else:
+        st.error(f"🔻 LSTM expects downside (Current: {last_price:.2f} → Avg Future: {avg_future:.2f})")
+
+    # Optional: show the MSE on the training tail for basic sanity check
+    # compute simple one-step validation MSE on last portion if available
+    try:
+        # use last 20% as quick validation if dataset big enough
+        split = int(len(X)*0.8)
+        if split < len(X)-5:
+            X_val, y_val = X[split:], y[split:]
+            y_pred_val = model.predict(X_val, verbose=0).flatten()
+            y_pred_val = scaler.inverse_transform(y_pred_val.reshape(-1,1)).flatten()
+            y_val_true = scaler.inverse_transform(y_val.reshape(-1,1)).flatten()
+            mse = np.mean((y_pred_val - y_val_true)**2)
+            st.info(f"Validation MSE (one-step) ≈ {mse:.4f}")
+    except Exception:
+        pass
+
+    st.write("Done. If the forecast still looks biased, consider increasing history length, training for more epochs, or using multivariate inputs (volume, indicators).")
