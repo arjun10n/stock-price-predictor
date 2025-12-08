@@ -241,4 +241,4 @@ if run:
     except Exception:
         pass
 
-    st.write("Done. If the forecast still looks biased, consider increasing history length, training for more epochs, or using multivariate inputs (volume, indicators).")
+    st.write(" Forecast complete! For more accurate results, try using more historical data or training the model longer.")
