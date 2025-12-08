@@ -32,7 +32,7 @@ with col2:
 with col3:
     forecast_days = st.selectbox("Forecast days", [7, 15, 30], index=2)
 
-retrain = st.checkbox("Retrain LSTM model (if unchecked, load existing if present)", value=False)
+retrain = st.checkbox("Loaded existing LSTM model for faster and accuracy prediction!", value=False)
 
 run = st.button("Run Forecast")
 
