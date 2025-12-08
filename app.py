@@ -19,7 +19,7 @@ except Exception as e:
     tf = None
 
 st.set_page_config(layout="wide")
-st.title("📈 Stock Trend + LSTM Forecasting")
+st.title("Stock Trend + LSTM Forecasting")
 
 # -----------------------
 # User inputs / UI
@@ -132,7 +132,7 @@ if run:
             if feat.shape[0] == 1:
                 pred = clf.predict(feat)[0]
                 st.subheader("Classifier (existing) - Current direction")
-                st.success("📈 Bullish (UP)" if pred == 1 else "📉 Bearish (DOWN)")
+                st.success(" Bullish (UP)" if pred == 1 else "Bearish (DOWN)")
             else:
                 st.warning("Not enough rows to feed classifier features.")
         else:
@@ -222,9 +222,9 @@ if run:
     avg_future = float(forecast_df['Predicted_Close'].mean())
 
     if avg_future > last_price:
-        st.success(f"🚀 LSTM expects upside (Current: {last_price:.2f} → Avg Future: {avg_future:.2f})")
+        st.success(f" LSTM expects upside (Current: {last_price:.2f} → Avg Future: {avg_future:.2f})")
     else:
-        st.error(f"🔻 LSTM expects downside (Current: {last_price:.2f} → Avg Future: {avg_future:.2f})")
+        st.error(f" LSTM expects downside (Current: {last_price:.2f} → Avg Future: {avg_future:.2f})")
 
     # Optional: show the MSE on the training tail for basic sanity check
     # compute simple one-step validation MSE on last portion if available
