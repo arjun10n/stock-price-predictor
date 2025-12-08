@@ -107,14 +107,30 @@ if run:
         st.error("No data returned for ticker. Check ticker symbol / exchange suffix (eg. INFY.NS).")
         st.stop()
 
-    # show price history
-    st.subheader(f"Price history for {ticker.upper()} (last {history_years} years)")
+    # -----------------------
+    # Historical Price + Indicators Graph (Updated)
+    # -----------------------
+    st.subheader(f"{ticker.upper()} — Historical Price & Indicators")
     price_col, ind_col = st.columns([2,1])
     with price_col:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Close'))
-        fig.update_layout(title=f"{ticker.upper()} Close Price", xaxis_title="Date", yaxis_title="Price", height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        fig_hist = go.Figure()
+        # Close Price
+        fig_hist.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Close', line=dict(color='blue', width=2)))
+        # EMA20
+        fig_hist.add_trace(go.Scatter(x=data.index, y=data['EMA20'], mode='lines', name='EMA20', line=dict(color='orange', width=1, dash='dot')))
+        # EMA50
+        fig_hist.add_trace(go.Scatter(x=data.index, y=data['EMA50'], mode='lines', name='EMA50', line=dict(color='green', width=1, dash='dot')))
+        # RSI on secondary axis
+        fig_hist.add_trace(go.Scatter(x=data.index, y=data['RSI'], mode='lines', name='RSI', yaxis='y2', line=dict(color='purple', width=1)))
+        fig_hist.update_layout(
+            title=f"{ticker.upper()} — Price & Indicators",
+            xaxis_title="Date",
+            yaxis_title="Price",
+            yaxis2=dict(title="RSI", overlaying="y", side="right"),
+            template="plotly_white",
+            height=500
+        )
+        st.plotly_chart(fig_hist, use_container_width=True)
 
     # indicators
     data = make_indicators(data)
@@ -206,13 +222,19 @@ if run:
     forecast_df = pd.DataFrame({"Date": future_dates, "Predicted_Close": preds})
     forecast_df.set_index("Date", inplace=True)
 
-    # combine history + forecast for plotting
-    combined = pd.concat([data['Close'], forecast_df['Predicted_Close']])
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Historical Close'))
-    fig2.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Predicted_Close'], mode='lines+markers', name='LSTM Forecast'))
-    fig2.update_layout(title=f"{ticker.upper()} — Historical + LSTM Forecast", xaxis_title="Date", yaxis_title="Price", height=450)
-    st.plotly_chart(fig2, use_container_width=True)
+    # -----------------------
+    # LSTM Forecast Graph (Updated)
+    # -----------------------
+    st.subheader(f"{ticker.upper()} — LSTM Forecast (Next {forecast_days} Days)")
+    fig_forecast = go.Figure()
+    # Historical Close
+    fig_forecast.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name='Historical Close', line=dict(color='blue', width=2)))
+    # Forecasted Close
+    fig_forecast.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Predicted_Close'], mode='lines+markers', name='Forecast', line=dict(color='red', width=2, dash='dash'), marker=dict(size=4)))
+    # Optional trend line connecting start → end of forecast
+    fig_forecast.add_trace(go.Scatter(x=[forecast_df.index[0], forecast_df.index[-1]], y=[forecast_df['Predicted_Close'].iloc[0], forecast_df['Predicted_Close'].iloc[-1]], mode='lines', name='Trend Line', line=dict(color='green', width=2, dash='dot')))
+    fig_forecast.update_layout(title=f"{ticker.upper()} — Historical + Forecast", xaxis_title="Date", yaxis_title="Price", template="plotly_white", height=500)
+    st.plotly_chart(fig_forecast, use_container_width=True)
 
     st.subheader("Forecast Table")
     st.write(forecast_df)
@@ -227,9 +249,7 @@ if run:
         st.error(f" LSTM expects downside (Current: {last_price:.2f} → Avg Future: {avg_future:.2f})")
 
     # Optional: show the MSE on the training tail for basic sanity check
-    # compute simple one-step validation MSE on last portion if available
     try:
-        # use last 20% as quick validation if dataset big enough
         split = int(len(X)*0.8)
         if split < len(X)-5:
             X_val, y_val = X[split:], y[split:]
