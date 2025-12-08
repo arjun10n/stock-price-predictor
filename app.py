@@ -42,12 +42,13 @@ st.line_chart(data["Close"])
 # ---------------------------------------------------------
 df = data[['Close']]
 scaler = MinMaxScaler()
-scaled = scaler.fit_transform(df)
+scaled = scaler.fit_transform(df.astype(float))
 
 # Generate sequences
 X, y = [], []
-for i in range(60, len(scaled)):
-    X.append(scaled[i-60:i, 0])
+lookback = 60
+for i in range(lookback, len(scaled)):
+    X.append(scaled[i-lookback:i, 0])
     y.append(scaled[i, 0])
 
 X, y = np.array(X), np.array(y)
@@ -71,19 +72,25 @@ with st.spinner("Training LSTM Model... takes 10–20 seconds ⚙"):
 # ---------------------------------------------------------
 # Forecast Next X Days
 # ---------------------------------------------------------
-input_data = scaled[-60:].reshape(1,60,1)
+# prepare the input: last `lookback` values
+input_seq = scaled[-lookback:].reshape(1, lookback, 1)
 future_preds = []
 
 for _ in range(forecast_days):
-    pred = model.predict(input_data, verbose=0)
+    pred = model.predict(input_seq, verbose=0)  # shape (1,1)
+    # Convert pred to shape (1,1,1) so we can concatenate along axis=1
+    pred_3d = pred.reshape(1, 1, 1)
+    # Append the prediction and shift window
+    input_seq = np.concatenate((input_seq[:, 1:, :], pred_3d), axis=1)
     future_preds.append(pred[0][0])
-    input_data = np.append(input_data[:,1:,:], [[pred]], axis=1)
 
+# inverse transform predictions
 future_preds = scaler.inverse_transform(np.array(future_preds).reshape(-1,1)).flatten()
 
-# Create future dates
-future_dates = pd.date_range(start=data.index[-1], periods=forecast_days+1)[1:]
-forecast_df = pd.DataFrame({"Date":future_dates,"Predicted Price":future_preds})
+# Create future dates starting the next calendar day after last historical index
+start_date = pd.to_datetime(data.index[-1]) + pd.Timedelta(days=1)
+future_dates = pd.date_range(start=start_date, periods=forecast_days)
+forecast_df = pd.DataFrame({"Date": future_dates, "Predicted Price": future_preds})
 
 # ---------------------------------------------------------
 # 📊 Visual Forecast Graph (Beautiful Beginner Friendly)
@@ -106,13 +113,13 @@ st.plotly_chart(fig, use_container_width=True)
 
 # Trend conclusion
 st.subheader("📌 Market Outlook")
-last_price = data['Close'].iloc[-1]
-future_mean = np.mean(future_preds)
+last_price = float(data['Close'].iloc[-1])
+future_mean = float(np.mean(future_preds))
 
 if future_mean > last_price:
-    st.success(f"📈 **UP Trend Expected** — Price likely rising 🚀")
+    st.success(f"📈 **UP Trend Expected** — Price likely rising 🚀\n(Current: {last_price:.2f} → Avg Future: {future_mean:.2f})")
 else:
-    st.error(f"📉 **Down Trend Expected** — Caution advised 🔻")
+    st.error(f"📉 **Down Trend Expected** — Caution advised 🔻\n(Current: {last_price:.2f} → Avg Future: {future_mean:.2f})")
 
 # Show table
 st.write("🔍 Forecasted Prices:")
