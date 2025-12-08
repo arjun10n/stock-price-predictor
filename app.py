@@ -6,23 +6,26 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import os
+from prophet import Prophet     # NEW - forecasting model
 
-st.title("📈 Stock Price Movement Predictor")
+st.title("📈 Stock Price Movement Predictor + Future Forecasting")
 
 ticker = st.text_input("Enter Stock Ticker (e.g., AAPL, INFY.BO):")
 
+# User can choose how much history to load
+days = st.selectbox("History Range", [30, 60, 90, 120, 180])
 today = datetime.today()
-default_start = today - timedelta(days=180)
-start_date = st.date_input("From Date", default_start)
-end_date = st.date_input("To Date", today)
+start_date = today - timedelta(days=days)
 
-if start_date > end_date:
-    st.error("🚫 Start date must be before end date.")
-elif ticker:
-    data = yf.download(ticker, start=start_date, end=end_date)
+# Forecast length options
+forecast_days = st.selectbox("Forecast Future", [7, 15, 30])
+
+if ticker:
+    data = yf.download(ticker, start=start_date, end=today)
 
     if not data.empty:
-        # Calculate indicators
+
+        # ---------------- INDICATORS (for ML UP/DOWN prediction) --------------------
         data['MA10'] = data['Close'].rolling(window=10).mean()
         data['MA50'] = data['Close'].rolling(window=50).mean()
 
@@ -39,15 +42,11 @@ elif ticker:
         data['MACD'] = exp1 - exp2
         data['Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
 
-        # Fill missing values (no drop)
         data.fillna(method='ffill', inplace=True)
         data.fillna(method='bfill', inplace=True)
 
-        # Require minimum data length
-        if len(data) < 60:
-            st.warning("⚠️ Not enough data for reliable analysis. Please select a longer date range.")
-        else:
-            # Prepare features correctly (make sure shape is (1,5))
+        # ---------------- CURRENT PRICE MOVEMENT PREDICTION --------------------
+        if len(data) >= 60:
             latest = data.iloc[-1]
             features = np.array([
                 latest['MA10'],
@@ -55,46 +54,68 @@ elif ticker:
                 latest['RSI'],
                 latest['MACD'],
                 latest['Signal']
-            ]).reshape(1, -1)  # This ensures 2D shape (1, 5)
+            ]).reshape(1, -1)
 
-            # Load model
             model_path = os.path.join(os.path.dirname(__file__), 'stock_model.joblib')
-            if not os.path.exists(model_path):
-                st.error(f"⚠️ Could not load model: File not found at {model_path}")
+            if os.path.exists(model_path):
+                model = joblib.load(model_path)
+                prediction = model.predict(features)[0]
+                result = "📈 UP Trend Expected" if prediction == 1 else "📉 DOWN Trend Expected"
+
+                st.subheader("Trend Direction (Machine Learning)")
+                st.success(result)
             else:
-                try:
-                    model = joblib.load(model_path)
-                    prediction = model.predict(features)[0]
-                    result = "📈 Stock is going UP" if prediction == 1 else "📉 Stock is going DOWN"
+                st.warning("⚠ ML Model not found — only forecast available.")
+        else:
+            st.warning("⚠ Need more historical data to predict UP/DOWN trend")
 
-                    st.subheader("Prediction")
-                    st.success(f"{result} (on {latest.name.date()})")
+        # ---------------- PRICE FORECASTING USING PROPHET --------------------
+        st.subheader(f"🔮 {forecast_days}-Day Future Price Forecast")
 
-                except Exception as e:
-                    st.error(f"⚠️ Could not use model: {e}")
+        df = data[['Close']].reset_index()
+        df.columns = ['ds', 'y']  # Prophet format requirement
 
-        # Plot Closing Price
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=data.index, y=data['Close'],
-            mode='lines+markers', name='Close Price',
-            hovertemplate='Date: %{x}<br>Price: %{y:.2f}<extra></extra>'
+        model_prophet = Prophet()
+        model_prophet.fit(df)
+
+        future = model_prophet.make_future_dataframe(periods=forecast_days)
+        forecast = model_prophet.predict(future)
+
+        # Plot forecast
+        fig_forecast = go.Figure()
+        fig_forecast.add_trace(go.Scatter(
+            x=df['ds'], y=df['y'],
+            mode='lines', name="Historical Price"
         ))
-        fig.update_layout(title=f"{ticker.upper()} Closing Price", xaxis_title="Date", yaxis_title="Price")
-        st.plotly_chart(fig)
+        fig_forecast.add_trace(go.Scatter(
+            x=forecast['ds'], y=forecast['yhat'],
+            mode='lines', name="Forecast Price", line=dict(color="orange")
+        ))
+        fig_forecast.update_layout(
+            title=f"{ticker.upper()} - Next {forecast_days} Days Forecast",
+            xaxis_title="Date", yaxis_title="Price"
+        )
 
-        # Plot RSI
-        st.subheader("RSI Indicator")
+        st.plotly_chart(fig_forecast)
+
+        # ---------------- INDICATOR CHARTS --------------------
+        st.subheader("📊 Indicators Used for Prediction")
+
+        # Price Chart
+        fig_price = go.Figure()
+        fig_price.add_trace(go.Scatter(x=data.index, y=data['Close'],
+                                       mode='lines', name='Close Price'))
+        fig_price.add_trace(go.Scatter(x=data.index, y=data['MA10'],
+                                       mode='lines', name='MA10'))
+        fig_price.add_trace(go.Scatter(x=data.index, y=data['MA50'],
+                                       mode='lines', name='MA50'))
+        st.plotly_chart(fig_price)
+
+        # RSI Chart
         fig_rsi = go.Figure()
-        fig_rsi.add_trace(go.Scatter(x=data.index, y=data['RSI'], line=dict(color='purple'), name='RSI'))
-        fig_rsi.add_shape(type="line", x0=data.index[0], x1=data.index[-1], y0=70, y1=70,
-                          line=dict(color="red", dash="dot"))
-        fig_rsi.add_shape(type="line", x0=data.index[0], x1=data.index[-1], y0=30, y1=30,
-                          line=dict(color="green", dash="dot"))
-        fig_rsi.update_layout(template='plotly_white', height=300)
+        fig_rsi.add_trace(go.Scatter(x=data.index, y=data['RSI'], name='RSI'))
+        fig_rsi.update_layout(title="RSI Indicator", height=300)
         st.plotly_chart(fig_rsi)
 
     else:
-        st.warning("❗ No data found for the given ticker and date range.")
-else:
-    st.info("ℹ️ Please enter a stock ticker and select date range to get started.")
+        st.error("❗ No data found — Try another stock symbol.")
