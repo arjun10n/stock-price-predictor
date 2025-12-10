@@ -44,11 +44,18 @@ CLASSIFIER_MODEL_PATH = os.path.join(BASE_DIR, "stock_model.joblib")
 # -----------------------
 # Utility functions
 # -----------------------
-def download_data(ticker_symbol: str, years:3, float):
-    end = datetime.today()
-    start = end - timedelta(days=int(365 * years))
-    df = yf.download(ticker_symbol, start=start, end=end, progress=False)
-    return df
+def download_data(ticker_symbol: str, min_rows: int = 300):
+    years = 1
+    while True:
+        end = datetime.today()
+        start = end - timedelta(days=int(365 * years))
+        df = yf.download(ticker_symbol, start=start, end=end, progress=False)
+
+        if df.shape[0] >= min_rows or years > 10:
+            return df
+
+        years += 1  # Auto increase dataset until enough rows
+
 
 def make_indicators(df: pd.DataFrame):
     df = df.copy()
