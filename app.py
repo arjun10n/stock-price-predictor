@@ -44,7 +44,7 @@ CLASSIFIER_MODEL_PATH = os.path.join(BASE_DIR, "stock_model.joblib")
 # -----------------------
 # Utility functions
 # -----------------------
-def download_data(ticker_symbol: str, years:3 float):
+def download_data(ticker_symbol: str, years:3, float):
     end = datetime.today()
     start = end - timedelta(days=int(365 * years))
     df = yf.download(ticker_symbol, start=start, end=end, progress=False)
