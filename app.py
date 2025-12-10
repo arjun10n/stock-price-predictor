@@ -193,8 +193,8 @@ if run:
                 pred = clf.predict(feat)[0]
                 st.subheader("Classifier (existing) - Current direction")
                 st.success(" Bullish (UP)" if pred == 1 else "Bearish (DOWN)")
-            else:
-                st.warning("Not enough rows to feed classifier features.")
+            #else:
+                #st.warning("Not enough rows to feed classifier features.")
         else:
             st.warning("Classifier model not found — skipping classifier prediction.")
     except Exception as e:
