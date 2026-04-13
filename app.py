@@ -12,7 +12,7 @@ st.set_page_config(page_title="Hybrid Stock AI", layout="wide")
 st.title("🌿📈 Hybrid Stock Predictor (ML + LSTM)")
 
 # PASSWORD
-PASSWORD = "heysexyladies"
+PASSWORD = "1234"
 pwd = st.text_input("Enter Password", type="password")
 
 if pwd != PASSWORD:
